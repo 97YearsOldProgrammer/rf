@@ -83,8 +83,11 @@ class IsoformTree:
 
         return gini
 
-    def split_mse(self, node):
-        ''' compute the mean squared error gain for split criteria '''
+    def split_mse(self, node, max_gini_test=False):
+        ''' 
+            compute the mean squared error gain for split criteria
+            additionally gini impurity is maintained for diversity of split quality
+        '''
 
         subset     = self.f_subset(node)
         parent_mse = self.compute_mse([val for _, _, val in subset])
@@ -99,16 +102,51 @@ class IsoformTree:
             left_mse   = self.compute_mse([val for _, _, val in left_node])
             right_mse  = self.compute_mse([val for _, _, val in right_node])
             gain_mse   = gain_mse - left_mse - right_mse
-            all_psplit[gain_mse] = [tuple(left_node) + tuple(right_node)]
+            if gain_mse not in all_psplit:  all_psplit[gain_mse] = [tuple(left_node) + tuple(right_node)]
+            else:                           all_psplit[gain_mse].append(tuple(left_node)+tuple(right_node))
         
-        max_gain = max(all_psplit)
-        if      len(all_psplit[max_gain]) == 2:
-            left_split, right_split = all_psplit[max_gain]
-            return left_split, right_split
-        else: pass
+        max_gain = sorted([mse for mse in all_psplit], reverse=True)
+
+        iter = 0
+        for mse in max_gain:
+
+            if max_gini_test and iter > max_gini_test:  return False
+
+            gini_threshold = self.gini_threshold if self.gini_threshold else 0.1
+
+            if len(all_psplit[mse]) == 2:
+                left_split, right_split = all_psplit[mse]
+                left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
+                right_gini = self.compute_gini([typ for _, typ, _ in right_split])
+
+                if left_gini <= gini_threshold and right_gini <= gini_threshold: continue
+                return left_split, right_split
+
+            else:
+                split_ginis = []
+
+                for left_split, right_split in all_psplit[mse]:
+                    left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
+                    right_gini = self.compute_gini([typ for _, typ, _ in right_split])
+                    split_ginis.append(left_gini + right_gini)
+
+                if max(split_ginis) <= 0.1: return False
+
+                max_idx    = split_ginis.index(max(split_ginis))
+
+                if max_idx % 2 == 0:
+                    left_split  = all_psplit[mse][max_idx]
+                    right_split = all_psplit[mse][max_idx+1]
+                    return left_split, right_split
+                else:
+                    left_split  = all_psplit[mse][max_idx-1]
+                    right_split = all_psplit[mse][max_idx]
+                    return left_split, right_split
+
+            iter += 1
 
     def _recursion_tree(self, dataset, depth):
-        ''' recursion until reach terminal node or depth'''
+        ''' recursion until death '''
         if self.depth:
             if self.depth == self.max_depth: return
             
