@@ -1,6 +1,13 @@
 import random
 import numpy as np
 
+def base2_to_int(bits) -> int:
+
+    idx = 0
+    for bit in bits:
+        idx = (idx << 1) | bit
+    return idx
+
 def finding_outlier(doa, pos2info, z_threshold=None):
     '''
     doa     :   dons or accs
@@ -36,15 +43,18 @@ def finding_outlier(doa, pos2info, z_threshold=None):
 
 class IsoformTree:
     
-    def __init__(self, dons, accs, pos2info, mtry, max_depth=None, outlier=False, gini_threshold=False):
-        self.dons           = dons
-        self.accs           = accs
-        self.pos2info       = pos2info
-        self.mtry           = mtry
-        self.max_depth      = max_depth
-        self.gini_threshold = gini_threshold
+    def __init__(self, dons, accs, pos2info, mtry, min_samples_split, max_depth=None, outlier=False, gini_threshold=False):
+        self.dons               = dons
+        self.accs               = accs
+        self.pos2info           = pos2info
+        self.mtry               = mtry
+        self.max_depth          = max_depth
+        self.gini_threshold     = gini_threshold
+        self.min_samples_split  = min_samples_split
+
         self.subset = []
-        self.output = []
+        self.output = dict()
+        self.rules  = []
         
         self._btstrapping()
         self.dataset = self.dons + self.accs
@@ -55,7 +65,7 @@ class IsoformTree:
         self.dons = sorted(random.choices(self.dons, k=len(self.dons) ))
         self.accs = sorted(random.choices(self.accs, k=len(self.accs) ))
         
-    def f_subset(self, node):
+    def _fsubset(self, node):
         ''' find random subset of current dataset '''
 
         return random.sample(node, self.mtry)
@@ -83,13 +93,13 @@ class IsoformTree:
 
         return gini
 
-    def split_mse(self, node, max_gini_test=False):
+    def _split(self, node, max_gini_test=False):
         ''' 
             compute the mean squared error gain for split criteria
             additionally gini impurity is maintained for diversity of split quality
         '''
 
-        subset     = self.f_subset(node)
+        subset     = self._fsubset(node)
         parent_mse = self.compute_mse([val for _, _, val in subset])
         subset     = sorted(subset, key=lambda x: x[2])
 
@@ -102,8 +112,8 @@ class IsoformTree:
             left_mse   = self.compute_mse([val for _, _, val in left_node])
             right_mse  = self.compute_mse([val for _, _, val in right_node])
             gain_mse   = gain_mse - left_mse - right_mse
-            if gain_mse not in all_psplit:  all_psplit[gain_mse] = [tuple(left_node) + tuple(right_node)]
-            else:                           all_psplit[gain_mse].append(tuple(left_node)+tuple(right_node))
+            if gain_mse not in all_psplit:  all_psplit[gain_mse] = [(left_node, right_node)]
+            else:                           all_psplit[gain_mse].append((left_node, right_node))
         
         max_gain = sorted([mse for mse in all_psplit], reverse=True)
 
@@ -116,6 +126,7 @@ class IsoformTree:
 
             if len(all_psplit[mse]) == 2:
                 left_split, right_split = all_psplit[mse]
+                if len(left_split) < self.min_samples_split or len(right_split) < self.min_samples_split:continue
                 left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
                 right_gini = self.compute_gini([typ for _, typ, _ in right_split])
 
@@ -126,6 +137,7 @@ class IsoformTree:
                 split_ginis = []
 
                 for left_split, right_split in all_psplit[mse]:
+                    if len(left_split) < self.min_samples_split or len(right_split) < self.min_samples_split:continue
                     left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
                     right_gini = self.compute_gini([typ for _, typ, _ in right_split])
                     split_ginis.append(left_gini + right_gini)
@@ -145,11 +157,73 @@ class IsoformTree:
 
             iter += 1
 
-    def _recursion_tree(self, dataset, depth):
+    def _store_output(self, node, path):
+        ''' store the leaf node of decision tree into base2 keys'''
+
+        id = base2_to_int(path)
+        self.output[id] = node
+    
+    def _recursion_tree(self, node, depth, path):
         ''' recursion until death '''
-        if self.depth:
-            if self.depth == self.max_depth: return
-            
+        '''
+            path:   list with 0 or 1 s.t. store the leaf node as decisions
+                    instead data structure approach
+        '''
+
+        ''' save leaf node ; end recursion '''
+        if self.max_depth:
+            if depth == self.max_depth:
+                self._store_output(node, path)
+                return
+        
+        if len(node) < self.min_samples_split:
+            self._store_output(node, path)
+            return
+
+        ''' continue splitting '''
+        split = self._split(node)
+
+        if split is False:
+            self._store_output(node, path)
+            return
+        
+        left_node, right_node = split
+        right_node      = sorted(right_node, key=lambda x: x[2])
+        _, _, val       = right_node[0]
+        split_threshold = val
+        self.rules.append(split_threshold)
+        
+        self._recursion_tree(left_node,  depth+1, [0]+path)
+        self._recursion_tree(right_node, depth+1, [1]+path)
         pass
-        
-        
+
+############################################################
+############################################################
+##################### DevData Generator ####################
+############################################################
+############################################################
+
+def generate_dev_data(
+        total_samples   = 20,
+        don_ratio       = 0.5,
+        value_range     = (0.0, 1.0),
+        pos_range       = (100, 1000),
+        seed            = None):
+
+    if seed is not None:
+        random.seed(seed)
+
+    positions = random.sample(range(pos_range[0], pos_range[1] + 1), total_samples)
+    random.shuffle(positions)
+
+    num_dons = int(total_samples * don_ratio)
+    dons     = positions[:num_dons]
+    accs     = positions[num_dons:]
+
+    pos2info = {
+        p: (random.uniform(value_range[0], value_range[1]),
+            'don' if p in dons else 'acc')
+        for p in positions
+    }
+
+    return dons, accs, pos2info
