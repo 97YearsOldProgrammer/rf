@@ -81,18 +81,28 @@ class IsoformTree:
         dons,
         accs,
         pos2info,
+        gini_threshold = None
     ):
         
         self.dons               = dons
         self.accs               = accs
         self.pos2info           = pos2info
         self.min_samples_split  = int(len(self.dons+self.accs) * 0.3)
+        self.gini_threshold     = gini_threshold
 
-        self.output = dict()
-        self.rules = []
+        self.output             = dict()
+        self.rules              = []
 
         self._btstrapping()
-        self._recursion_tree(self.dons+self.accs, [])
+
+        dataset = [
+            (pos,
+             pos2info[pos][1],
+             pos2info[pos][0])
+             for pos in (self.dons + self.accs)
+        ]
+
+        self._recursion_tree(dataset, [])
 
     def _btstrapping(self):
         ''' Bootstrap original donor and acceptor sites '''
@@ -164,12 +174,16 @@ class IsoformTree:
         for mse in max_gain:
             splits = all_psplit[mse]
 
+            splits = [(L,R) for L,R in splits if L and R]
+            if not splits:
+                continue
+
             if len(splits) == 1:
                 left_split, right_split = splits[0]
 
                 ltest = len(left_split)  < self.min_samples_split
                 rtest = len(right_split) < self.min_samples_split
-                if ltest and rtest: continue
+                if ltest or rtest: continue
 
                 ltest = self._gini_test([typ for _, typ, _ in left_split])
                 rtest = self._gini_test([typ for _, typ, _ in right_split])
@@ -185,7 +199,7 @@ class IsoformTree:
                 for left_split, right_split in splits:
                     ltest = len(left_split)  < self.min_samples_split
                     rtest = len(right_split) < self.min_samples_split
-                    if ltest and rtest: continue
+                    if ltest or rtest: continue
 
                     left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
                     right_gini = self.compute_gini([typ for _, typ, _ in right_split])
@@ -214,21 +228,27 @@ class IsoformTree:
     def _recursion_tree(self, node, path):
         ''' Recursion until death '''
 
+        if not node:
+            return
+        
         if len(node) < self.min_samples_split:
             self._store_output(node, path)
             return
 
+        # split on subset
         split = self._split(node)
+
         if split is False:
             self._store_output(node, path)
             return
 
+        # split original dataset
         split_threshold = self.rules[-1]
         node            = sorted(node, key=lambda x: x[2])
 
         idx = 0
         for i, (*_, val) in enumerate(node):
-            if val > split_threshold:
+            if val >= split_threshold:
                 idx = i
                 break
         
