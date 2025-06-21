@@ -68,7 +68,6 @@ def generate_dev_data(
 ##################### DecisionTree Class ###################
 ############################################################
 
-
 '''
 random forest parameter:
     mtry    : p/3
@@ -81,15 +80,17 @@ class IsoformTree:
         dons,
         accs,
         pos2info,
-        gini_threshold = None
+        min_sample_coeff    = 0.3,
+        diff_split_coeff    = 0.9,
+        gini_threshold      = None           # test each split for gini_impurity 
     ):
         
         self.dons               = dons
         self.accs               = accs
         self.pos2info           = pos2info
-        self.min_samples_split  = int(len(self.dons+self.accs) * 0.3)
+        self.min_samples_split  = int(len(self.dons+self.accs) * min_sample_coeff)
         self.gini_threshold     = gini_threshold
-
+        self.diff_samples_split = self.min_samples_split * diff_split_coeff
         self.output             = dict()
         self.rules              = []
 
@@ -174,20 +175,19 @@ class IsoformTree:
         for mse in max_gain:
             splits = all_psplit[mse]
 
-            splits = [(L,R) for L,R in splits if L and R]
-            if not splits:
-                continue
-
             if len(splits) == 1:
                 left_split, right_split = splits[0]
 
                 ltest = len(left_split)  < self.min_samples_split
                 rtest = len(right_split) < self.min_samples_split
-                if ltest or rtest: continue
+                if ltest and rtest: continue
+
+                diff_test = abs(len(left_split)-len(right_split))
+                if diff_test <= self.diff_samples_split: continue
 
                 ltest = self._gini_test([typ for _, typ, _ in left_split])
                 rtest = self._gini_test([typ for _, typ, _ in right_split])
-                if ltest and rtest:  continue
+                if ltest or rtest:  continue
 
                 self._find_threshold(right_split)
                 return
@@ -199,7 +199,10 @@ class IsoformTree:
                 for left_split, right_split in splits:
                     ltest = len(left_split)  < self.min_samples_split
                     rtest = len(right_split) < self.min_samples_split
-                    if ltest or rtest: continue
+                    if ltest and rtest: continue
+
+                    diff_test = abs(len(left_split)-len(right_split))
+                    if diff_test <= self.diff_samples_split: continue
 
                     left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
                     right_gini = self.compute_gini([typ for _, typ, _ in right_split])
@@ -220,6 +223,8 @@ class IsoformTree:
                     self._find_threshold(right_split)
                     return
 
+        return False
+
     def _store_output(self, node, path):
         ''' Store the leaf node of decision tree into base2 keys '''
         id = base2_to_int(path)
@@ -234,7 +239,7 @@ class IsoformTree:
         if len(node) < self.min_samples_split:
             self._store_output(node, path)
             return
-
+        
         # split on subset
         split = self._split(node)
 
