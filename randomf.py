@@ -72,6 +72,9 @@ def generate_dev_data(
 random forest parameter:
     mtry    : p/3
     nodesize: 30% of root node
+    
+    diff_split_coeff: current being inhibit
+        if diff_coeff: expand the full binary tree
 '''
 class IsoformTree:
 
@@ -146,9 +149,21 @@ class IsoformTree:
         ''' Find the split threshold for split original dataset '''
         right_split     = sorted(right_split, key=lambda x: x[2])
         _, _, threshold = right_split[0]
+        return threshold
 
-        self.rules.append(threshold)
-
+    def _split_node(self, threshold, node):
+        ''' split the original node based on threshold '''
+        node = sorted(node, key=lambda x: x[2])
+        idx = 0
+        for i, (*_, val) in enumerate(node):
+            if val >= threshold:
+                idx = i
+                break
+        
+        left_node  = node[:idx]
+        right_node = node[idx+1:]
+        return left_node, right_node
+        
     def _split(self, node):
         ''' 
             Compute the mean squared error gain for split criteria
@@ -160,69 +175,75 @@ class IsoformTree:
 
         all_psplit = {}
 
-        for i in range(len(subset)):
+        for i in range(len(subset)-1):
             gain_mse    = parent_mse
-            left_node   = subset[:i+1]
-            right_node  = subset[i+1:]
-            left_mse    = self.compute_mse([val for _, _, val in left_node])
-            right_mse   = self.compute_mse([val for _, _, val in right_node])
+            left_split  = subset[:i+1]
+            right_split = subset[i+1:]
+            left_mse    = self.compute_mse([val for _, _, val in left_split])
+            right_mse   = self.compute_mse([val for _, _, val in right_split])
             gain_mse    = gain_mse - left_mse - right_mse
-
-            all_psplit.setdefault(gain_mse, []).append((left_node, right_node))
+            threshold   = self._find_threshold(right_split)
+            all_psplit.setdefault(gain_mse, []).append(threshold)
 
         max_gain = sorted(all_psplit.keys(), reverse=True)
 
         for mse in max_gain:
-            splits = all_psplit[mse]
+            thresholds = all_psplit[mse]
 
-            if len(splits) == 1:
-                left_split, right_split = splits[0]
+            if len(thresholds) == 1:
+                ''' if single threshold '''
+                threshold = thresholds[0]
+                left_node, right_node = self._split_node(threshold, node)
 
-                ltest = len(left_split)  < self.min_samples_split
-                rtest = len(right_split) < self.min_samples_split
+                ltest = len(left_node)  < self.min_samples_split
+                rtest = len(right_node) < self.min_samples_split
                 if ltest and rtest: continue
 
-                diff_test = abs(len(left_split)-len(right_split))
-                if diff_test <= self.diff_samples_split: continue
-
-                ltest = self._gini_test([typ for _, typ, _ in left_split])
-                rtest = self._gini_test([typ for _, typ, _ in right_split])
+                '''
+                diff_test = abs(len(left_node)-len(right_node))
+                if diff_test > self.diff_samples_split: continue
+                '''
+                
+                ltest = self._gini_test([typ for _, typ, _ in left_node])
+                rtest = self._gini_test([typ for _, typ, _ in right_node])
                 if ltest or rtest:  continue
 
-                self._find_threshold(right_split)
+                self.rules.append(threshold)
                 return
 
             else:
                 ''' if mse collision happen '''
                 split_ginis = []
 
-                for left_split, right_split in splits:
-                    ltest = len(left_split)  < self.min_samples_split
-                    rtest = len(right_split) < self.min_samples_split
+                for threshold in thresholds:
+                    left_node, right_node = self._split_node(threshold, node)
+                    
+                    ltest = len(left_node)  < self.min_samples_split
+                    rtest = len(right_node) < self.min_samples_split
                     if ltest and rtest: continue
 
+                    '''
                     diff_test = abs(len(left_split)-len(right_split))
-                    if diff_test <= self.diff_samples_split: continue
-
-                    left_gini  = self.compute_gini([typ for _, typ, _ in left_split])
-                    right_gini = self.compute_gini([typ for _, typ, _ in right_split])
+                    if diff_test > self.diff_samples_split: continue
+                    '''
+                    
+                    left_gini  = self.compute_gini([typ for _, typ, _ in left_node])
+                    right_gini = self.compute_gini([typ for _, typ, _ in right_node])
                     split_ginis.append(left_gini)
                     split_ginis.append(right_gini)
 
                 if not split_ginis or max(split_ginis) <= 0.1:  return False
-
                 max_idx = split_ginis.index(max(split_ginis))
-
-                if max_idx % 2 == 0:
-                    right_split = splits[max_idx+1]
-                    self._find_threshold(right_split)
-                    return
                 
-                else:
-                    right_split = splits[max_idx]
-                    self._find_threshold(right_split)
+                if max_idx % 2 == 0:
+                    threshold = thresholds[max_idx%2]
+                    self.rules.append(threshold)
                     return
-
+                else:
+                    threshold = thresholds[(max_idx-1)%2]
+                    self.rules.append(threshold)
+                    return
+                    
         return False
 
     def _store_output(self, node, path):
@@ -234,6 +255,7 @@ class IsoformTree:
         ''' Recursion until death '''
 
         if not node:
+            self._store_output(node, path)
             return
         
         if len(node) < self.min_samples_split:
@@ -246,19 +268,10 @@ class IsoformTree:
         if split is False:
             self._store_output(node, path)
             return
-
+        
         # split original dataset
         split_threshold = self.rules[-1]
-        node            = sorted(node, key=lambda x: x[2])
-
-        idx = 0
-        for i, (*_, val) in enumerate(node):
-            if val >= split_threshold:
-                idx = i
-                break
-        
-        left_node  = node[:idx]
-        right_node = node[idx+1:]
+        left_node, right_node = self._split_node(split_threshold, node)
 
         self._recursion_tree(left_node,  [0] + path)
         self._recursion_tree(right_node, [1] + path)
