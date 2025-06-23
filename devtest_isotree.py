@@ -14,7 +14,7 @@ arg = parser.parse_args()
 
 for _ in range(arg.trails):
     size = random.randint(0, arg.ub)
-    dons, accs, pos2info = randomf.generate_dev_data(20)
+    dons, accs, pos2info = randomf.generate_dev_data(size)
     tree = IsoformTree(dons, accs, pos2info)
     splits = len(tree.rules)
     leaves = len(tree.output)
@@ -26,3 +26,9 @@ for _ in range(arg.trails):
         print(tree.rules)
         print(leaves)
         print(tree.output)
+        
+'''
+    result:
+        the isoformtree do behave as a full split tree
+        which that leaf nodes == splits + 1
+'''

@@ -1,6 +1,41 @@
 import random
 import numpy as np
 
+############################################################
+##################### DevData Generator ####################
+############################################################
+
+''' simulator for output of the HMM model '''
+
+def generate_dev_data(
+        total_samples   = 20,
+        don_ratio       = 0.6,
+        value_range     = (0.0, 1.0),
+        pos_range       = (0, 1000),
+        seed            = None):
+
+    if seed is not None:
+        random.seed(seed)
+
+    positions = random.sample(range(pos_range[0], pos_range[1] + 1), total_samples)
+    random.shuffle(positions)
+
+    num_dons = int(total_samples * don_ratio)
+    dons     = positions[:num_dons]
+    accs     = positions[num_dons:]
+
+    pos2info = {
+        p: (random.uniform(value_range[0], value_range[1]),
+            'don' if p in dons else 'acc')
+        for p in positions
+    }
+
+    return dons, accs, pos2info
+
+############################################################
+######################### Functions ########################
+############################################################
+
 def base2_to_int(bits) -> int:
 
     idx = 0
@@ -36,35 +71,6 @@ def finding_outlier(doa, pos2info, z_threshold=None):
     return otl, doa
 
 ############################################################
-##################### DevData Generator ####################
-############################################################
-
-def generate_dev_data(
-        total_samples   = 20,
-        don_ratio       = 0.6,
-        value_range     = (0.0, 1.0),
-        pos_range       = (0, 1000),
-        seed            = None):
-
-    if seed is not None:
-        random.seed(seed)
-
-    positions = random.sample(range(pos_range[0], pos_range[1] + 1), total_samples)
-    random.shuffle(positions)
-
-    num_dons = int(total_samples * don_ratio)
-    dons     = positions[:num_dons]
-    accs     = positions[num_dons:]
-
-    pos2info = {
-        p: (random.uniform(value_range[0], value_range[1]),
-            'don' if p in dons else 'acc')
-        for p in positions
-    }
-
-    return dons, accs, pos2info
-
-############################################################
 ##################### DecisionTree Class ###################
 ############################################################
 
@@ -76,6 +82,7 @@ random forest parameter:
     diff_split_coeff: current being inhibit
         if diff_coeff: expand the full binary tree
 '''
+
 class IsoformTree:
 
     def __init__(
@@ -275,3 +282,46 @@ class IsoformTree:
 
         self._recursion_tree(left_node,  [0] + path)
         self._recursion_tree(right_node, [1] + path)
+
+############################################################
+##################### Classifier Class #####################
+############################################################
+
+class IsoformClassifer:
+    
+    def __init__(
+        self,
+        data,              # (pos, typ, val) : (int, dons or accs, float)
+        rules,
+        output,
+    ):
+        self.data  = data
+        self.rules  = rules
+        self.output = output
+        
+        self.feature    = [val for _, _, val in self.data][0]
+        self.prediction = []
+        self._rules2base2(self.rules)
+        
+        idx        = base2_to_int(self.prediction)
+        
+        dons = [pos for typ, pos, _ in [self.output[idx] + self.input] if typ == 'dons']
+        accs = [pos for typ, pos, _ in [self.output[idx] + self.input] if typ == 'accs']
+        
+        return dons, accs
+    
+    def _rules2base2(self, node):
+        
+        if not node:
+            return
+        
+        root_split = node[0]
+        
+        if self.feature < root_split:
+            next_node = [val for val in node if val < root_split]
+            self.prediction.append(0)
+        else:
+            next_node = [val for val in node if val > root_split]
+            self.prediction.append(1)
+        
+        self._rules2base2(next_node)
